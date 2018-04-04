@@ -18,6 +18,7 @@ import bs4
 from lxml import etree
 import os, pdb, codecs, sqlite3, pprint, zipfile, textwrap, io, re, StringIO, traceback
 from collections import namedtuple, defaultdict
+from pdb import set_trace
 
 import sys  
 reload(sys)  
@@ -66,7 +67,9 @@ def get_all_annotations(db_file):
         mark     = an_item[1].rstrip('\x00')
         mark_end = an_item[2].rstrip('\x00')
         marked_text = an_item[3]
-        my_annotation_obj = annotation_obj(book_info_dict[book_id], mark, mark_end, marked_text.replace('\n', ''))
+        my_annotation_obj = annotation_obj(book_info_dict[book_id], mark, 
+                                           mark_end, 
+                                           marked_text.replace('\n', ''))
         annotation_dict[book_id].extend([my_annotation_obj])
                
     return  annotation_dict
@@ -121,12 +124,13 @@ def get_node_by_hier_path(hier_path, a_soup):
 
 def underline(some_text, underliner='-', overline=False):
     if overline:
-        return  len(some_text) * underliner + '\n' + some_text + '\n' + len(some_text) * underliner + '\n'
+        return  len(some_text) * underliner + '\n' + some_text + '\n' + \
+        len(some_text) * underliner + '\n'
     else :
         return   some_text + '\n' + len(some_text) * underliner + '\n'
 
 
-def point_info (a_mark) :
+def get_point_info (a_mark) :
     _point_tuple = a_mark.split('#')[1].replace('point', '').split(':')
     _hier_tuple  = _point_tuple[0].lstrip('(').strip().split('/')
     hier_tupe    = [int(a) for a in _hier_tuple if a != '']
@@ -134,56 +138,30 @@ def point_info (a_mark) :
     return [hier_tupe, offset]
 
 
-def print_debug_info(mark, mark_end, xhtml_data, xhtml_path):
-    out_stream = StringIO.StringIO("")
-    start_point_info, start_offset = point_info(mark)
-    end_point_info  , end_offset   = point_info(mark_end)
-    node_hier_start = [a-1 for a in start_point_info][2:]
-    node_hier_end   = [a-1 for a in end_point_info][2:]
 
-    out_stream.write("*  start_point_info: %s\n" % str(start_point_info))
-    out_stream.write("*  start_offset    : %s\n" % str(start_offset))
-    out_stream.write("*  end_point_info  : %s\n" % str(end_point_info))
-    out_stream.write("*  end_offset      : %s\n" % str(end_offset))
+def extract_node(mark, xhtml_data):
 
-    out_stream.write("*  node_hier_start : %s\n" %(node_hier_start))
-    out_stream.write("*  node_hier_end   = %s\n" %(node_hier_end))
-    out_stream.write("*  XHTML path      = %s\n" %(xhtml_path))
-
-    out_stream.write("*  Start node      = ``get_node_by_hier_path(%s, soup.body)``\n" %(node_hier_start))
-    return out_stream
-
-
-def tag_filter(a_tag):
-    return isinstance(an_element, bs4.element.ProcessingInstruction)
-
-def extract_node(mark, mark_end, xhtml_data):
-    
     out_stream = StringIO.StringIO("")
     soup       = bs4.BeautifulSoup(xhtml_data, 'lxml')
+    ignore_tag = lambda an_element: type(an_element) in [bs4.element.ProcessingInstruction,
+                                                         bs4.element.XMLProcessingInstruction,
+                                                         bs4.element.Comment,
+                                                         bs4.element.Declaration]
+    point_info , offset = get_point_info(mark)
+    node_hier = [a-1 for a in point_info][2:]
 
-    for an_element in soup.find_all(True):
-        # we need to scrub the ProcessingInstruction tags
-        if isinstance(an_element, bs4.element.ProcessingInstruction):
-            print 'removing ' + str(an_element)
-            #import pdb; pdb.set_trace()
-            an_element.extract()
-    
-
-    start_point_info, start_offset = point_info(mark)
-    end_point_info  , end_offset   = point_info(mark_end)
-    node_hier_start = [a-1 for a in start_point_info][2:]
-    node_hier_end   = [a-1 for a in end_point_info][2:]
+    node_hier[0] = node_hier[0] + 2
 
 
-    start_node = get_node_by_hier_path(node_hier_start, soup.body)
+    out_stream.write("\n")
+    out_stream.write("  * point_info      : %s\n" % str(point_info))
+    out_stream.write("  * offset          : %s\n" % str(offset))
+    out_stream.write("  * node_hier       : %s\n" % str(node_hier))
+    #out_stream.write("  *  XHTML path      = %s\n" %(xhtml_path))
+    out_stream.write("  * extrac. code    : ``get_node_by_hier_path(%s, soup.body)``\n" %(node_hier))
 
-
-    # XXX: we are here and attempting to determing the start/stop issues
-    # first when the mark, mark_end belong to the same node, the second case
-    # fixes the issues where start and end are on two differnt nodes
-    
-    out_stream.write(unicode(start_node))
+    start_node = get_node_by_hier_path(node_hier, soup.body)
+    out_stream.write('\n  ' + unicode(start_node))
         
     return out_stream
 
@@ -198,7 +176,8 @@ def get_annotation_texts(out_stream=sys.stdout):
     regex  = re.compile(_regex)
 
 
-    non_empty_book_ids = [an_id for an_id in book_info_dict.keys() if annotation_dict[an_id] != []]
+    non_empty_book_ids = [an_id for an_id in book_info_dict.keys() if 
+                          annotation_dict[an_id] != []]
     # XXX: do the full monty or just the first couple of books?
     for a_book_id in non_empty_book_ids:
         if a_book_id != 4294967700 : continue
@@ -213,7 +192,8 @@ def get_annotation_texts(out_stream=sys.stdout):
 
         for index, annotation_obj in enumerate(annotations_in_book):
             out_stream.write(underline("\nAnchors"))
-            out_stream.write('    * %s\n    * %s\n\n' %(annotation_obj.mark, annotation_obj.mark_end ) )
+            out_stream.write('    * %s\n    * %s\n\n' %(annotation_obj.mark, 
+                                                        annotation_obj.mark_end))
             # first the marked_text field from database
             out_stream.write(underline("Marked text"))
             out_stream.write('' + annotation_obj.marked_text.strip() + '\n\n')
@@ -231,27 +211,29 @@ def get_annotation_texts(out_stream=sys.stdout):
             epub_file_name      = book_info_obj.file_path
             epub_path           = os.path.join(r"J:/", epub_file_name)
 
-            try:
-                data                = get_xhtml(epub_path, individual_xml_path)
-                local_xhtml_path    = get_xhtml_path(epub_path, individual_xml_path)
-                debug_info          = print_debug_info(mark = annotation_obj.mark,
-                                                       mark_end    = annotation_obj.mark_end,
-                                                       xhtml_data  = data,
-                                                       xhtml_path  = local_xhtml_path)
-                out_stream.write(underline("Debug info"))
-                out_stream.write(debug_info.getvalue()+'\n')
+            data                = get_xhtml(epub_path, individual_xml_path)
+            local_xhtml_path    = get_xhtml_path(epub_path, individual_xml_path)
+            out_stream.write(underline("Extracted node"))
 
-                out_stream.write(underline("Extracted node"))
+            try:
                 # mark
-                out_stream.write(underline("Start:", underliner = '.'))
+                out_stream.write(underline("Mark:", underliner = '.'))
                 from_doc = extract_node(mark        = annotation_obj.mark,
-                                        mark_end    = annotation_obj.mark_end,
+                                        xhtml_data  = data)
+                out_stream.write(from_doc.getvalue() + '\n')
+            except:
+                out_stream.write("Extraction error:\n\n")
+                out_stream.write("::\n\n")
+                py_error = traceback.format_exc()
+                traceback_msg = '\n'.join(['   ' + a for a in py_error.split('\n')])
+                out_stream.write(traceback_msg + '\n')
+            try:
+                # mark end
+                out_stream.write('\n')
+                out_stream.write(underline("Mark end:", underliner = '.'))
+                from_doc = extract_node(mark        = annotation_obj.mark_end,
                                         xhtml_data  = data)
                 out_stream.write('  ' + from_doc.getvalue() + '\n')
-
-
-
-
             except:
                 out_stream.write("Extraction error:\n\n")
                 out_stream.write("::\n\n")
