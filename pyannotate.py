@@ -139,7 +139,7 @@ def get_point_info (a_mark) :
 
 
 
-def extract_node(mark, xhtml_data):
+def extract_node(mark, xhtml_data, xhtml_path):
 
     out_stream = StringIO.StringIO("")
     soup       = bs4.BeautifulSoup(xhtml_data, 'lxml')
@@ -157,7 +157,7 @@ def extract_node(mark, xhtml_data):
     out_stream.write("  * point_info      : %s\n" % str(point_info))
     out_stream.write("  * offset          : %s\n" % str(offset))
     out_stream.write("  * node_hier       : %s\n" % str(node_hier))
-    #out_stream.write("  *  XHTML path      = %s\n" %(xhtml_path))
+    out_stream.write("  * XHTML path      : %s\n" %(xhtml_path))
     out_stream.write("  * extrac. code    : ``get_node_by_hier_path(%s, soup.body)``\n" %(node_hier))
 
     start_node = get_node_by_hier_path(node_hier, soup.body)
@@ -219,7 +219,8 @@ def get_annotation_texts(out_stream=sys.stdout):
                 # mark
                 out_stream.write(underline("Mark:", underliner = '.'))
                 from_doc = extract_node(mark        = annotation_obj.mark,
-                                        xhtml_data  = data)
+                                        xhtml_data  = data,
+                                        xhtml_path  = local_xhtml_path)
                 out_stream.write(from_doc.getvalue() + '\n')
             except:
                 out_stream.write("Extraction error:\n\n")
@@ -232,7 +233,8 @@ def get_annotation_texts(out_stream=sys.stdout):
                 out_stream.write('\n')
                 out_stream.write(underline("Mark end:", underliner = '.'))
                 from_doc = extract_node(mark        = annotation_obj.mark_end,
-                                        xhtml_data  = data)
+                                        xhtml_data  = data ,
+                                        xhtml_path  = local_xhtml_path)
                 out_stream.write('  ' + from_doc.getvalue() + '\n')
             except:
                 out_stream.write("Extraction error:\n\n")
