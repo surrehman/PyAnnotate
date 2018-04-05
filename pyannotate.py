@@ -75,6 +75,27 @@ def get_all_annotations(db_file):
     return  annotation_dict
 
 
+level = 0
+
+def traverse(a_tag, func, node_index):
+    global level
+    func(a_tag, node_index)
+    level +=1    
+    for index, a_child in enumerate(a_tag):
+        if not isinstance(a_tag, (str, unicode)):
+            traverse(a_child, func, index)
+    level -=1        
+        
+def prune_dom(a_node, dummy_index):
+    if isinstance(a_node,  bs4.element.ProcessingInstruction):
+        a_node.extract()
+
+def print_dom(a_tag, index=0):
+    global level
+    _repr = unicode(a_tag).replace('\n', ' ')
+    print "%s  [%03d] %s (%s) %s" % \
+    (level * ' ' , index, _clean_tag_type(str(type(a_tag))), a_tag.name, _repr)
+
 def get_xhtml_path(zip_file_path, internal_path):
 
     epub_name = os.path.splitext(os.path.basename(zip_file_path))[0].strip()
@@ -113,7 +134,6 @@ def get_xhtml(zip_file_path, internal_path):
     return markup_data
 
 def get_node_by_hier_path(hier_path, a_soup):
-
     current_node = a_soup
     while len(hier_path) != 0:
         current_node = current_node.contents[hier_path[0]]
@@ -138,20 +158,36 @@ def get_point_info (a_mark) :
     return [hier_tupe, offset]
 
 
+def ignore_tag(an_element):
+    return type(an_element) not in [bs4.element.ProcessingInstruction,
+                                    bs4.element.XMLProcessingInstruction,
+                                    bs4.element.Comment,
+                                    bs4.element.Declaration]
+
+def get_soup(a_path):
+    with codecs.open(a_path, 'r', 'utf-8') as fp:
+        soup = bs4.BeautifulSoup(fp.read(), 'lxml')
+    return soup
+
+
+def get_strained_soup(a_path):
+    my_strainer = bs4.SoupStrainer(string = ignore_tag)
+    with codecs.open(a_path, 'r', 'utf-8') as fp:
+        simple_soup = bs4.BeautifulSoup(fp.read(), 'lxml', parse_only = my_strainer)
+    return simple_soup
 
 def extract_node(mark, xhtml_data, xhtml_path):
 
     out_stream = StringIO.StringIO("")
     soup       = bs4.BeautifulSoup(xhtml_data, 'lxml')
-    ignore_tag = lambda an_element: type(an_element) in [bs4.element.ProcessingInstruction,
-                                                         bs4.element.XMLProcessingInstruction,
-                                                         bs4.element.Comment,
-                                                         bs4.element.Declaration]
+
+    my_strainer = bs4.SoupStrainer(string = ignore_tag)
+    strained_soup = bs4.BeautifulSoup(xhtml_data, 'lxml', parse_only = my_strainer)
+
+    traverse(strained_soup.body, prune_dom, 0)
+
     point_info , offset = get_point_info(mark)
     node_hier = [a-1 for a in point_info][2:]
-
-    node_hier[0] = node_hier[0] + 2
-
 
     out_stream.write("\n")
     out_stream.write("  * point_info      : %s\n" % str(point_info))
@@ -160,8 +196,17 @@ def extract_node(mark, xhtml_data, xhtml_path):
     out_stream.write("  * XHTML path      : %s\n" %(xhtml_path))
     out_stream.write("  * extrac. code    : ``get_node_by_hier_path(%s, soup.body)``\n" %(node_hier))
 
-    start_node = get_node_by_hier_path(node_hier, soup.body)
-    out_stream.write('\n  ' + unicode(start_node))
+    try:
+        extracted_node = get_node_by_hier_path(node_hier, strained_soup.body)
+        out_stream.write('\n  ' + unicode(extracted_node))
+
+    except:
+        out_stream.write("\nExtraction error:\n\n")
+        out_stream.write("::\n\n")
+        py_error = traceback.format_exc()
+        traceback_msg = '\n'.join(['   ' + a for a in py_error.split('\n')])
+        out_stream.write(traceback_msg + '\n')
+
         
     return out_stream
 
@@ -215,42 +260,25 @@ def get_annotation_texts(out_stream=sys.stdout):
             local_xhtml_path    = get_xhtml_path(epub_path, individual_xml_path)
             out_stream.write(underline("Extracted node"))
 
-            try:
-                # mark
-                out_stream.write(underline("Mark:", underliner = '.'))
-                from_doc = extract_node(mark        = annotation_obj.mark,
-                                        xhtml_data  = data,
-                                        xhtml_path  = local_xhtml_path)
-                out_stream.write(from_doc.getvalue() + '\n')
-            except:
-                out_stream.write("Extraction error:\n\n")
-                out_stream.write("::\n\n")
-                py_error = traceback.format_exc()
-                traceback_msg = '\n'.join(['   ' + a for a in py_error.split('\n')])
-                out_stream.write(traceback_msg + '\n')
-            try:
-                # mark end
-                out_stream.write('\n')
-                out_stream.write(underline("Mark end:", underliner = '.'))
-                from_doc = extract_node(mark        = annotation_obj.mark_end,
-                                        xhtml_data  = data ,
-                                        xhtml_path  = local_xhtml_path)
-                out_stream.write('  ' + from_doc.getvalue() + '\n')
-            except:
-                out_stream.write("Extraction error:\n\n")
-                out_stream.write("::\n\n")
-                py_error = traceback.format_exc()
-                traceback_msg = '\n'.join(['   ' + a for a in py_error.split('\n')])
-                out_stream.write(traceback_msg + '\n')
+            # mark
+            out_stream.write(underline("Mark:", underliner = '.'))
+            from_doc = extract_node(mark        = annotation_obj.mark,
+                                    xhtml_data  = data,
+                                    xhtml_path  = local_xhtml_path)
+            out_stream.write(from_doc.getvalue() + '\n')
+        
+            # mark end
+            out_stream.write('\n')
+            out_stream.write(underline("Mark end:", underliner = '.'))
+            from_doc = extract_node(mark        = annotation_obj.mark_end,
+                                    xhtml_data  = data ,
+                                    xhtml_path  = local_xhtml_path)
+            out_stream.write('  ' + from_doc.getvalue() + '\n')
 
             if (index != len(annotations_in_book)-1):
                 out_stream.write('\n------\n\n')
 
 
-def get_soup(a_path):
-    with codecs.open(a_path, 'r', 'utf-8') as fp:
-        soup = bs4.BeautifulSoup(fp.read(), 'lxml')
-    return soup
 
 
     
