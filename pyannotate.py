@@ -117,11 +117,9 @@ def extract_xhtml(epub_file_path, internal_path):
     if not os.path.isdir(target_dir) : os.makedirs(target_dir)
 
     extracted_data_file = os.path.join(target_dir, internal_path.replace('/', '_'))
-    # read from prev. saved file (if possible)
+    # prev. saved file 
     if os.path.isfile(extracted_data_file) :
-       in_fp       = open(extracted_data_file, 'rb')
-       markup_data = in_fp.read()
-       in_fp.close()
+        pass   
     # no prev. extracted markup, extract + save in tmp + return markup
     else:
         archive  = zipfile.ZipFile(epub_file_path, 'r')
@@ -131,7 +129,7 @@ def extract_xhtml(epub_file_path, internal_path):
         out_fp.write(markup_data)
         out_fp.close()
 
-    return markup_data
+    return extracted_data_file
 
 def get_node_by_hier_path(hier_path, a_soup):
     current_node = a_soup
@@ -164,33 +162,59 @@ def ignore_tag(an_element):
                                     bs4.element.Comment,
                                     bs4.element.Declaration]
 
-def get_soup(a_path):
-    with codecs.open(a_path, 'r', 'utf-8') as fp:
-        soup = bs4.BeautifulSoup(fp.read(), 'lxml')
+SOUP_CACHE          = dict()
+STRAINED_SOUP_CACHE = dict()
+
+def get_soup(file_path):
+    global SOUP_CACHE
+    if SOUP_CACHE.get(file_path) is not None: soup = SOUP_CACHE[file_path] 
+    else:
+        with codecs.open(file_path, 'r', 'utf-8') as fp:
+            soup = bs4.BeautifulSoup(fp.read(), 'lxml')
+        traverse(soup.body, prune_dom, 0)
+        SOUP_CACHE[file_path] = soup
     return soup
 
 
-def get_strained_soup(a_path):
-    my_strainer = bs4.SoupStrainer(string = ignore_tag)
-    with codecs.open(a_path, 'r', 'utf-8') as fp:
-        simple_soup = bs4.BeautifulSoup(fp.read(), 'lxml', parse_only = my_strainer)
-    return simple_soup
+def get_strained_soup(file_path):
+    global STRAINED_SOUP_CACHE
+    if STRAINED_SOUP_CACHE.get(file_path) is not None:
+        strained_soup = STRAINED_SOUP_CACHE[file_path]
+    else:
+        my_strainer = bs4.SoupStrainer(string = ignore_tag)
+        with codecs.open(file_path, 'r', 'utf-8') as fp:
+            strained_soup = bs4.BeautifulSoup(fp.read(), 'lxml', parse_only = my_strainer)
+        
+        traverse(strained_soup.body, prune_dom, 0)
+        STRAINED_SOUP_CACHE[file_path] = strained_soup
+
+    return strained_soup
 
 def extract_node(location_str, annotation_obj, book_info_obj):
     mark                = getattr(annotation_obj, location_str)
     individual_xml_path = mark.split('#')[0].strip()
     epub_file_name      = book_info_obj.file_path
+    out_stream          = StringIO.StringIO("")
     epub_path           = os.path.join(r"J:/", epub_file_name)
-    data                = extract_xhtml(epub_path, individual_xml_path)
     local_xhtml_path    = get_xhtml_path(epub_path, individual_xml_path)
 
-    out_stream = StringIO.StringIO("")
-    soup       = bs4.BeautifulSoup(data, 'lxml')
+    try:
+        data_path           = extract_xhtml(epub_path, individual_xml_path)
 
-    my_strainer = bs4.SoupStrainer(string = ignore_tag)
-    strained_soup = bs4.BeautifulSoup(data, 'lxml', parse_only = my_strainer)
+    except:
+        out_stream.write("\nExtraction error:\n\n")
+        out_stream.write("::\n\n")
+        py_error = traceback.format_exc()
+        traceback_msg = '\n'.join(['   ' + a for a in py_error.split('\n')])
+        out_stream.write(traceback_msg + '\n')
+        return out_stream
 
-    traverse(strained_soup.body, prune_dom, 0)
+    with codecs.open(data_path, 'r', 'utf-8') as fp: 
+        data = fp.read()
+
+    
+    soup          = get_soup(data_path)
+    strained_soup = get_strained_soup(data_path)
 
     point_info , offset = get_point_info(mark)
     node_hier = [a-1 for a in point_info][2:]
@@ -204,7 +228,7 @@ def extract_node(location_str, annotation_obj, book_info_obj):
 
     try:
         extracted_node = get_node_by_hier_path(node_hier, strained_soup.body)
-        out_stream.write('\n  ' + unicode(extracted_node))
+        out_stream.write('\n' + unicode(extracted_node))
 
     except:
         out_stream.write("\nExtraction error:\n\n")
@@ -244,15 +268,12 @@ def get_annotation_texts(out_stream=sys.stdout):
         for index, annotation_obj in enumerate(annotations_in_book):
             out_stream.write(underline("\nAnchors"))
             out_stream.write('    * %s\n    * %s\n\n' %(annotation_obj.mark, 
-                                                        annotation_obj.mark_end))
+                                                       annotation_obj.mark_end))
             # first the marked_text field from database
             out_stream.write(underline("Marked text"))
             out_stream.write('' + annotation_obj.marked_text.strip() + '\n\n')
 
-            # some debug information
-
             # Now the extacted stuff from the DOM (if not pdf)
-
             if  book_info_obj.file_path.endswith('pdf'): 
                 out_stream.write(underline("Extracted node"))
                 out_stream.write("Cannot extract from pdf" + '\n')
