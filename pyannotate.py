@@ -105,13 +105,13 @@ def get_xhtml_path(zip_file_path, internal_path):
     extracted_data_file = os.path.join(target_dir, internal_path.replace('/', '_'))
     return '``soup=get_soup(r"%s")``' % extracted_data_file
 
-def get_xhtml(zip_file_path, internal_path):
+def extract_xhtml(epub_file_path, internal_path):
     """
     Extract the contents of an file inside an epub. Also copy the contents
     to a file (for debugging). 
     """
 
-    epub_name = os.path.splitext(os.path.basename(zip_file_path))[0].strip()
+    epub_name = os.path.splitext(os.path.basename(epub_file_path))[0].strip()
     
     target_dir = os.path.join('tmp', epub_name)
     if not os.path.isdir(target_dir) : os.makedirs(target_dir)
@@ -124,7 +124,7 @@ def get_xhtml(zip_file_path, internal_path):
        in_fp.close()
     # no prev. extracted markup, extract + save in tmp + return markup
     else:
-        archive  = zipfile.ZipFile(zip_file_path, 'r')
+        archive  = zipfile.ZipFile(epub_file_path, 'r')
         xml_data = archive.open(internal_path)
         markup_data     = xml_data.read()
         out_fp   = open(extracted_data_file, mode= 'wb')
@@ -176,13 +176,19 @@ def get_strained_soup(a_path):
         simple_soup = bs4.BeautifulSoup(fp.read(), 'lxml', parse_only = my_strainer)
     return simple_soup
 
-def extract_node(mark, xhtml_data, xhtml_path):
+def extract_node(location_str, annotation_obj, book_info_obj):
+    mark                = getattr(annotation_obj, location_str)
+    individual_xml_path = mark.split('#')[0].strip()
+    epub_file_name      = book_info_obj.file_path
+    epub_path           = os.path.join(r"J:/", epub_file_name)
+    data                = extract_xhtml(epub_path, individual_xml_path)
+    local_xhtml_path    = get_xhtml_path(epub_path, individual_xml_path)
 
     out_stream = StringIO.StringIO("")
-    soup       = bs4.BeautifulSoup(xhtml_data, 'lxml')
+    soup       = bs4.BeautifulSoup(data, 'lxml')
 
     my_strainer = bs4.SoupStrainer(string = ignore_tag)
-    strained_soup = bs4.BeautifulSoup(xhtml_data, 'lxml', parse_only = my_strainer)
+    strained_soup = bs4.BeautifulSoup(data, 'lxml', parse_only = my_strainer)
 
     traverse(strained_soup.body, prune_dom, 0)
 
@@ -193,7 +199,7 @@ def extract_node(mark, xhtml_data, xhtml_path):
     out_stream.write("  * point_info      : %s\n" % str(point_info))
     out_stream.write("  * offset          : %s\n" % str(offset))
     out_stream.write("  * node_hier       : %s\n" % str(node_hier))
-    out_stream.write("  * XHTML path      : %s\n" %(xhtml_path))
+    out_stream.write("  * XHTML path      : %s\n" %(local_xhtml_path))
     out_stream.write("  * extrac. code    : ``get_node_by_hier_path(%s, soup.body)``\n" %(node_hier))
 
     try:
@@ -252,27 +258,22 @@ def get_annotation_texts(out_stream=sys.stdout):
                 out_stream.write("Cannot extract from pdf" + '\n')
                 continue
 
-            individual_xml_path = annotation_obj.mark.split('#')[0].strip()
-            epub_file_name      = book_info_obj.file_path
-            epub_path           = os.path.join(r"J:/", epub_file_name)
 
-            data                = get_xhtml(epub_path, individual_xml_path)
-            local_xhtml_path    = get_xhtml_path(epub_path, individual_xml_path)
             out_stream.write(underline("Extracted node"))
 
             # mark
             out_stream.write(underline("Mark:", underliner = '.'))
-            from_doc = extract_node(mark        = annotation_obj.mark,
-                                    xhtml_data  = data,
-                                    xhtml_path  = local_xhtml_path)
+            from_doc = extract_node('mark',
+                                    annotation_obj,
+                                    book_info_obj)
             out_stream.write(from_doc.getvalue() + '\n')
         
             # mark end
             out_stream.write('\n')
             out_stream.write(underline("Mark end:", underliner = '.'))
-            from_doc = extract_node(mark        = annotation_obj.mark_end,
-                                    xhtml_data  = data ,
-                                    xhtml_path  = local_xhtml_path)
+            from_doc = extract_node('mark_end',
+                                    annotation_obj,
+                                    book_info_obj)
             out_stream.write('  ' + from_doc.getvalue() + '\n')
 
             if (index != len(annotations_in_book)-1):
