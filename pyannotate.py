@@ -14,7 +14,7 @@
 #point(/1/4/80/3:362)	
 #point(/1/4/80/3:441)
 
-import bs4
+import bs4, chardet
 from lxml import etree
 import os, pdb, codecs, sqlite3, pprint, zipfile, textwrap, io, re, StringIO, traceback
 from collections import namedtuple, defaultdict
@@ -89,8 +89,8 @@ def traverse(a_tag, func, node_index, **kwargs):
     level -=1        
         
 def prune_dom(a_node, dummy_index):
-    nodes_to_prune = (bs4.element.ProcessingInstruction, bs4.element.Comment)
-    #nodes_to_prune = (bs4.element.ProcessingInstruction)
+    #nodes_to_prune = (bs4.element.ProcessingInstruction, bs4.element.Comment)
+    nodes_to_prune = (bs4.element.ProcessingInstruction)
     if isinstance(a_node,  nodes_to_prune):
         a_node.extract()
 
@@ -171,32 +171,46 @@ def ignore_tag(an_element):
 SOUP_CACHE          = dict()
 STRAINED_SOUP_CACHE = dict()
 
-def get_soup(file_path):
+def get_soup(file_path, encoding='utf-8'):
     global SOUP_CACHE
     if SOUP_CACHE.get(file_path) is not None: soup = SOUP_CACHE[file_path] 
     else:
-        with codecs.open(file_path, 'r', 'utf-8') as fp:
-            soup = bs4.BeautifulSoup(fp.read(), 'lxml')
+        with codecs.open(file_path, 'r', encoding) as fp:
+            contents = xml_line_filter(fp)
+            soup = bs4.BeautifulSoup(contents, 'lxml')
         traverse(soup.body, prune_dom, 0)
         SOUP_CACHE[file_path] = soup
     return soup
 
+def xml_line_filter(fp, on=True):
+    out_stream =  StringIO.StringIO("")
+    if on:
+        for a_line in fp:
+            if a_line.strip().startswith('<!--') and a_line.strip().endswith('-->'):
+                out_stream.write('\n')
+            else :
+                out_stream.write(a_line)
+    else:
+        out_stream.write(fp.read())
 
-def get_strained_soup(file_path):
+    return out_stream.getvalue()
+
+def get_strained_soup(file_path, encoding='utf-8'):
     global STRAINED_SOUP_CACHE
     if STRAINED_SOUP_CACHE.get(file_path) is not None:
         strained_soup = STRAINED_SOUP_CACHE[file_path]
     else:
         my_strainer = bs4.SoupStrainer(string = ignore_tag)
-        with codecs.open(file_path, 'r', 'utf-8') as fp:
-            strained_soup = bs4.BeautifulSoup(fp.read(), 'lxml', parse_only = my_strainer)
+        with codecs.open(file_path, 'r', encoding) as fp:
+            contents = xml_line_filter(fp)
+            strained_soup = bs4.BeautifulSoup(contents, 'lxml', parse_only = my_strainer)
         
         traverse(strained_soup.body, prune_dom, 0)
         STRAINED_SOUP_CACHE[file_path] = strained_soup
 
     return strained_soup
 
-def extract_node(location_str, annotation_obj, book_info_obj):
+def extract_node(location_str, annotation_obj, book_info_obj, encoding='utf-8'):
     global level
     mark                = getattr(annotation_obj, location_str)
     individual_xml_path = mark.split('#')[0].strip()
@@ -220,13 +234,13 @@ def extract_node(location_str, annotation_obj, book_info_obj):
         data = fp.read()
 
     
-    soup          = get_soup(data_path)
-    strained_soup = get_strained_soup(data_path)
+    soup          = get_soup(data_path, encoding)
+    strained_soup = get_strained_soup(data_path, encoding)
 
     # dump the soup for later debugging:
-    #soup_dump = "%s.soup" % data_path
-    #with codecs.open(soup_dump, 'w', 'utf-8') as fp:
-    #    traverse(strained_soup.body , print_dom , 0, out_stream=fp)
+    soup_dump = "%s.soup" % data_path
+    with codecs.open(soup_dump, 'w', 'utf-8') as fp:
+        traverse(strained_soup.body , print_dom , 0, out_stream=fp)
         
 
     point_info , offset = get_point_info(mark)
@@ -238,7 +252,9 @@ def extract_node(location_str, annotation_obj, book_info_obj):
         out_stream.write("  * offset          : %s\n" % str(offset))
         out_stream.write("  * node_hier       : %s\n" % str(node_hier))
         out_stream.write("  * XHTML path      : %s\n" %(local_xhtml_path))
+        out_stream.write("  * Encoding        : %s\n" %(encoding))
         out_stream.write("  * extrac. code    : ``get_node_by_hier_path(%s, soup.body)``\n" %(node_hier))
+        out_stream.write("  * Soup            : ``%s``\n" %(soup_dump))
 
     try:
         extracted_node = get_node_by_hier_path(node_hier, strained_soup.body)
@@ -270,12 +286,13 @@ def get_annotation_texts(out_stream=sys.stdout):
     non_empty_book_ids = [an_id for an_id in book_info_dict.keys() if 
                           annotation_dict[an_id] != []]
     # XXX: do the full monty or just the first couple of books?
-    for a_book_id in non_empty_book_ids[:15]:
-        #if a_book_id not in [4294968997, 4294967700] : continue
+    for a_book_id in non_empty_book_ids:
+        #if a_book_id not in [4294968997, 4294967700, 4294969467] : continue
+        if a_book_id not in [4294968997, 4294967700] : continue
         book_info_obj       = book_info_dict[a_book_id]
         annotations_in_book = annotation_dict[a_book_id]
 
-        print '-I- Processing %s'  % (book_info_obj.title)
+        print '-I- Processing %s %s'  % (book_info_obj.title, a_book_id)
 
         out_stream.write('\n' + underline(book_info_obj.title, underliner = '*') + '\n')
         out_stream.write('Book ID: (*%s*)\n\n' % a_book_id)
@@ -292,55 +309,80 @@ def get_annotation_texts(out_stream=sys.stdout):
 
             # Now the extacted stuff from the DOM (if not pdf)
             if  book_info_obj.file_path.endswith('pdf'): 
-                out_stream.write(underline("Extracted node"))
-                out_stream.write("Cannot extract from pdf" + '\n')
                 continue
 
 
             out_stream.write(underline("Extracted node"))
 
-            from_doc , start_node = extract_node('mark',
-                                    annotation_obj,
-                                    book_info_obj)
-            from_doc , end_node = extract_node('mark_end',
-                                    annotation_obj,
-                                    book_info_obj)
+            from_doc_n1 , start_node = extract_node('mark',
+                                                 annotation_obj,
+                                                 book_info_obj)
+            from_doc_n2 , end_node = extract_node('mark_end',
+                                                annotation_obj,
+                                                book_info_obj)
 
             if (DEBUG_INFO):
                 # mark
                 out_stream.write(underline("Mark:", underliner = '.'))
-                out_stream.write(from_doc.getvalue() + '\n')
+                out_stream.write(from_doc_n1.getvalue() + '\n')
                 # mark end
                 out_stream.write('\n')
                 out_stream.write(underline("Mark end:", underliner = '.'))
-                out_stream.write('  ' + from_doc.getvalue() + '\n\n')
+                out_stream.write('  ' + from_doc_n2.getvalue() + '\n\n')
 
             if start_node is not None and end_node is not None:
                 _ , start_offset = get_point_info(annotation_obj.mark)
                 _ , end_offset   = get_point_info(annotation_obj.mark_end)
                 #out_stream.write(underline('Start, end'  , underliner='~'))
                 #out_stream.write('\n*  %d, %d \n' % (start_offset, end_offset))
-                out_stream.write("*  Node types: ``%s``, ``%s``\n\n" % (str(type(start_node)), str(type(end_node)))  )
+                #out_stream.write("*  Node types: ``%s``, ``%s``\n\n" % (str(type(start_node)), str(type(end_node)))  )
 
                 if start_node == end_node :
                     if type(start_node) == bs4.element.NavigableString:
-                        out_stream.write(underline('SameNodes: Using ``bytes()``, start,end locations for ``NavigableString``', underliner='~'))
-                        _data = bytes(unicode(start_node))
-                        data = _data[start_offset:end_offset]
-                        out_stream.write(data + '\n\n')
+                        _data     = bytes(unicode(start_node))
+                        byte_data = _data[start_offset:end_offset]
+                        _data     = unicode(start_node)
+                        data      = _data[start_offset:end_offset]
+                        try:
+                            if data != byte_data:
+                                # same node, data != byte_data
+                                msg = underline('SameNodes ``(%s)``: Using ``bytes()``, start,end locations for ``NavigableString``'  % \
+                                _clean_tag_type(str(type(start_node))),  underliner='~')
+                                out_stream.write(msg)
+                                out_stream.write(byte_data + '\n\n')
 
-                        out_stream.write(underline('SameNodes: Using start,end locations for ``NavigableString``', underliner='~'))
-                        _data = unicode(start_node)
-                        data = _data[start_offset:end_offset]
-                        out_stream.write('\n' + data + '\n')
-
-
+                                #msg = underline('SameNodes ``(%s)``: Using start,end locations for ``NavigableString``'  %\
+                                #_clean_tag_type(str(type(start_node))),underliner='~')
+                                #out_stream.write(msg)
+                                #out_stream.write('\n' + data + '\n')
+                            else:
+                                # same node, data == byte_data
+                                out_stream.write(underline('SameNodes ``(%s)`` ``data == byte_data``' %\
+                                _clean_tag_type(str(type(start_node))), underliner='~'))
+                                out_stream.write('\n' + data + '\n')
+                        except:
+                            # this is some wierd UnicodeDecodeError that I have 
+                            # not figured out yet
+                            out_stream.write(underline('Unicode error, fallback``(%s)`` ``data ? byte_data``' %\
+                            _clean_tag_type(str(type(start_node))), underliner='~'))
+                            fallback = annotation_obj.marked_text.strip() 
+                            out_stream.write('\n' + fallback + '\n')
                     else:
-                        out_stream.write(underline('SameNodes: Using start,end locations via ``get_text``', underliner='~'))
+                        # same nodes, but not NavigableString
+                        msg = 'Same nodes but not NavigableString: %s, %s, via ``start_node.get_text()[start_offset, end_offset]``' %(str(type(start_node)), str(type(end_node)))
+                        out_stream.write(underline(msg, underliner='~'))
                         data = start_node.get_text()[start_offset, end_offset]
                         out_stream.write(data + '\n')
                 else:
-                    out_stream.write("Deffered Implementation: Differnet nodes\n\n")
+                    # Case when the marked text extends  over nodes
+                    _start_node_text = bytes(unicode(start_node))
+                    _end_node_text   = bytes(unicode(end_node))
+                    start_node_text  = _start_node_text[start_offset:]
+                    end_node_text    = _end_node_text  [:end_offset]
+                    combined         = start_node_text + end_node_text
+                    msg              =  "Different nodes (combined)"
+                    out_stream.write(underline(msg , underliner='~'))
+                    out_stream.write( '\n' + combined + '\n')
 
 
             if (index != len(annotations_in_book)-1):
