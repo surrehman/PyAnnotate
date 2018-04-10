@@ -31,7 +31,7 @@ sys.setdefaultencoding('utf8')
 sys.stdout = codecs.getwriter('utf8')(sys.stdout)
 sys.stderr = codecs.getwriter('utf8')(sys.stderr)
 
-DEBUG_INFO = 1
+DEBUG_INFO = 0
 
 
 def get_book_info(db_file):
@@ -239,22 +239,22 @@ def extract_node(location_str, annotation_obj, book_info_obj, encoding='utf-8'):
 
     # dump the soup for later debugging:
     soup_dump = "%s.soup" % data_path
-    with codecs.open(soup_dump, 'w', 'utf-8') as fp:
-        traverse(strained_soup.body , print_dom , 0, out_stream=fp)
+    if (DEBUG_INFO):
+        with codecs.open(soup_dump, 'w', 'utf-8') as fp:
+            traverse(strained_soup.body , print_dom , 0, out_stream=fp)
         
 
     point_info , offset = get_point_info(mark)
     node_hier = [a-1 for a in point_info][2:]
 
-    if (DEBUG_INFO):
-        out_stream.write("\n")
-        out_stream.write("  * point_info      : %s\n" % str(point_info))
-        out_stream.write("  * offset          : %s\n" % str(offset))
-        out_stream.write("  * node_hier       : %s\n" % str(node_hier))
-        out_stream.write("  * XHTML path      : %s\n" %(local_xhtml_path))
-        out_stream.write("  * Encoding        : %s\n" %(encoding))
-        out_stream.write("  * extrac. code    : ``get_node_by_hier_path(%s, soup.body)``\n" %(node_hier))
-        out_stream.write("  * Soup            : ``%s``\n" %(soup_dump))
+    print_debug("\n", out_stream)
+    print_debug("  * point_info      : %s\n" % str(point_info), out_stream)
+    print_debug("  * offset          : %s\n" % str(offset), out_stream)
+    print_debug("  * node_hier       : %s\n" % str(node_hier), out_stream)
+    print_debug("  * XHTML path      : %s\n" %(local_xhtml_path), out_stream)
+    print_debug("  * Encoding        : %s\n" %(encoding), out_stream)
+    print_debug("  * extrac. code    : ``get_node_by_hier_path(%s, soup.body)``\n" %(node_hier), out_stream)
+    print_debug("  * Soup            : ``%s``\n" %(soup_dump), out_stream)
 
     try:
         extracted_node = get_node_by_hier_path(node_hier, strained_soup.body)
@@ -269,7 +269,9 @@ def extract_node(location_str, annotation_obj, book_info_obj, encoding='utf-8'):
         out_stream.write(traceback_msg + '\n')
         return out_stream, None
 
-        
+def print_debug(data, out_stream):
+    if not DEBUG_INFO: return
+    else: out_stream.write(data)
     
 
 def get_annotation_texts(out_stream=sys.stdout):
@@ -288,7 +290,6 @@ def get_annotation_texts(out_stream=sys.stdout):
     # XXX: do the full monty or just the first couple of books?
     for a_book_id in non_empty_book_ids:
         #if a_book_id not in [4294968997, 4294967700, 4294969467] : continue
-        if a_book_id not in [4294968997, 4294967700] : continue
         book_info_obj       = book_info_dict[a_book_id]
         annotations_in_book = annotation_dict[a_book_id]
 
@@ -299,20 +300,22 @@ def get_annotation_texts(out_stream=sys.stdout):
 
 
         for index, annotation_obj in enumerate(annotations_in_book):
-            if (DEBUG_INFO):
-                out_stream.write(underline("\nAnchors"))
-                out_stream.write('    * %s\n    * %s\n\n' %(annotation_obj.mark, 
-                                                           annotation_obj.mark_end))
-                # first the marked_text field from database
-            out_stream.write(underline("Marked text"))
-            out_stream.write('' + annotation_obj.marked_text.strip() + '\n\n')
+            print_debug(underline("\nAnchors"), out_stream)
+            print_debug('    * %s\n    * %s\n\n' %(annotation_obj.mark, 
+                                                   annotation_obj.mark_end),
+                                                       out_stream)
+            # first the marked_text field from database
+            print_debug(underline("Marked text"), out_stream)
+            # final output (form database)
+            out_stream.write('* ' + annotation_obj.marked_text.strip() + '\n')
 
             # Now the extacted stuff from the DOM (if not pdf)
             if  book_info_obj.file_path.endswith('pdf'): 
                 continue
 
 
-            out_stream.write(underline("Extracted node"))
+            
+            print_debug(underline("Extracted node"), out_stream)
 
             from_doc_n1 , start_node = extract_node('mark',
                                                  annotation_obj,
@@ -320,15 +323,13 @@ def get_annotation_texts(out_stream=sys.stdout):
             from_doc_n2 , end_node = extract_node('mark_end',
                                                 annotation_obj,
                                                 book_info_obj)
-
-            if (DEBUG_INFO):
-                # mark
-                out_stream.write(underline("Mark:", underliner = '.'))
-                out_stream.write(from_doc_n1.getvalue() + '\n')
-                # mark end
-                out_stream.write('\n')
-                out_stream.write(underline("Mark end:", underliner = '.'))
-                out_stream.write('  ' + from_doc_n2.getvalue() + '\n\n')
+            # mark
+            print_debug(underline("Mark:", underliner = '.'), out_stream)
+            print_debug(from_doc_n1.getvalue() + '\n', out_stream)
+            # mark end
+            print_debug('\n', out_stream)
+            print_debug(underline("Mark end:", underliner = '.'), out_stream)
+            print_debug('  ' + from_doc_n2.getvalue() + '\n\n', out_stream)
 
             if start_node is not None and end_node is not None:
                 _ , start_offset = get_point_info(annotation_obj.mark)
@@ -337,19 +338,21 @@ def get_annotation_texts(out_stream=sys.stdout):
                 #out_stream.write('\n*  %d, %d \n' % (start_offset, end_offset))
                 #out_stream.write("*  Node types: ``%s``, ``%s``\n\n" % (str(type(start_node)), str(type(end_node)))  )
 
-                if start_node == end_node :
-                    if type(start_node) == bs4.element.NavigableString:
-                        _data     = bytes(unicode(start_node))
-                        byte_data = _data[start_offset:end_offset]
-                        _data     = unicode(start_node)
-                        data      = _data[start_offset:end_offset]
-                        try:
+                try:
+                    if start_node == end_node :
+                        if type(start_node) == bs4.element.NavigableString:
+                            _data     = bytes(unicode(start_node))
+                            byte_data = _data[start_offset:end_offset]
+                            _data     = unicode(start_node)
+                            data      = _data[start_offset:end_offset]
+                            
                             if data != byte_data:
                                 # same node, data != byte_data
                                 msg = underline('SameNodes ``(%s)``: Using ``bytes()``, start,end locations for ``NavigableString``'  % \
                                 _clean_tag_type(str(type(start_node))),  underliner='~')
-                                out_stream.write(msg)
-                                out_stream.write(byte_data + '\n\n')
+                                print_debug(msg, out_stream)
+                                out_string = byte_data 
+                                out_stream.write('* %s\n' % out_string.replace('\n', ' ').strip())
 
                                 #msg = underline('SameNodes ``(%s)``: Using start,end locations for ``NavigableString``'  %\
                                 #_clean_tag_type(str(type(start_node))),underliner='~')
@@ -357,34 +360,43 @@ def get_annotation_texts(out_stream=sys.stdout):
                                 #out_stream.write('\n' + data + '\n')
                             else:
                                 # same node, data == byte_data
-                                out_stream.write(underline('SameNodes ``(%s)`` ``data == byte_data``' %\
-                                _clean_tag_type(str(type(start_node))), underliner='~'))
-                                out_stream.write('\n' + data + '\n')
-                        except:
-                            # this is some wierd UnicodeDecodeError that I have 
-                            # not figured out yet
-                            out_stream.write(underline('Unicode error, fallback``(%s)`` ``data ? byte_data``' %\
-                            _clean_tag_type(str(type(start_node))), underliner='~'))
-                            fallback = annotation_obj.marked_text.strip() 
-                            out_stream.write('\n' + fallback + '\n')
+                                print_debug(underline('SameNodes ``(%s)`` ``data == byte_data``' %\
+                                _clean_tag_type(str(type(start_node))),
+                                underliner='~'), out_stream)
+                                out_string = data
+                                out_stream.write('* %s\n' % out_string.replace('\n', ' ').strip())
+                                    
+                        else:
+                            # same nodes, but not NavigableString
+                            msg = 'Same nodes but not NavigableString: %s, %s, via ``start_node.get_text()[start_offset, end_offset]``' %(str(type(start_node)), str(type(end_node)))
+                            print_debug(underline(msg, underliner='~'), out_stream)
+                            data = start_node.get_text()[start_offset, end_offset]
+                            out_string = data
+                            out_stream.write('* %s\n' % out_string.replace('\n', ' ').strip())
                     else:
-                        # same nodes, but not NavigableString
-                        msg = 'Same nodes but not NavigableString: %s, %s, via ``start_node.get_text()[start_offset, end_offset]``' %(str(type(start_node)), str(type(end_node)))
-                        out_stream.write(underline(msg, underliner='~'))
-                        data = start_node.get_text()[start_offset, end_offset]
-                        out_stream.write(data + '\n')
-                else:
-                    # Case when the marked text extends  over nodes
-                    _start_node_text = bytes(unicode(start_node))
-                    _end_node_text   = bytes(unicode(end_node))
-                    start_node_text  = _start_node_text[start_offset:]
-                    end_node_text    = _end_node_text  [:end_offset]
-                    combined         = start_node_text + end_node_text
-                    msg              =  "Different nodes (combined)"
-                    out_stream.write(underline(msg , underliner='~'))
-                    out_stream.write( '\n' + combined + '\n')
+                        # Case when the marked text extends  over nodes
+                        _start_node_text = bytes(unicode(start_node))
+                        _end_node_text   = bytes(unicode(end_node))
+                        start_node_text  = _start_node_text[start_offset:]
+                        end_node_text    = _end_node_text  [:end_offset]
+                        out_string       = start_node_text + end_node_text
+                        msg              =  "Different nodes (combined)"
+                        print_debug(underline(msg , underliner='~'), out_stream)
+                        out_stream.write('* %s\n' % out_string.replace('\n', ' ').strip())
+
+                except:
+                    # this is some wierd UnicodeDecodeError that I have 
+                    # not figured out yet
+                    print_debug(underline('Unicode error, fallback``(%s)`` ``data ? byte_data``' %\
+                    _clean_tag_type(str(type(start_node))), underliner='~'), out_stream)
+                    fallback = annotation_obj.marked_text.strip() 
+                    out_string = fallback
+                    out_stream.write('* %s\n' % out_string.replace('\n', ' ').strip())
+
+                #out_stream.write('* %s\n' % out_string.replace('\n', ' ').strip())
 
 
+            
             if (index != len(annotations_in_book)-1):
                 out_stream.write('\n------\n\n')
 
