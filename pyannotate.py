@@ -32,7 +32,7 @@ sys.stdout = codecs.getwriter('utf8')(sys.stdout)
 sys.stderr = codecs.getwriter('utf8')(sys.stderr)
 
 DEBUG_INFO = 0
-
+DUMP_SOUP  = 0
 
 def get_book_info(db_file):
     conn_obj   = sqlite3.connect(db_file)
@@ -89,7 +89,6 @@ def traverse(a_tag, func, node_index, **kwargs):
     level -=1        
         
 def prune_dom(a_node, dummy_index):
-    #nodes_to_prune = (bs4.element.ProcessingInstruction, bs4.element.Comment)
     nodes_to_prune = (bs4.element.ProcessingInstruction)
     if isinstance(a_node,  nodes_to_prune):
         a_node.extract()
@@ -177,7 +176,7 @@ def get_soup(file_path, encoding='utf-8'):
     else:
         with codecs.open(file_path, 'r', encoding) as fp:
             contents = xml_line_filter(fp)
-            soup = bs4.BeautifulSoup(contents, 'lxml')
+            soup = bs4.BeautifulSoup(bytes(contents), 'lxml', from_encoding=encoding)
         traverse(soup.body, prune_dom, 0)
         SOUP_CACHE[file_path] = soup
     return soup
@@ -203,7 +202,7 @@ def get_strained_soup(file_path, encoding='utf-8'):
         my_strainer = bs4.SoupStrainer(string = ignore_tag)
         with codecs.open(file_path, 'r', encoding) as fp:
             contents = xml_line_filter(fp)
-            strained_soup = bs4.BeautifulSoup(contents, 'lxml', parse_only = my_strainer)
+            strained_soup = bs4.BeautifulSoup(bytes(contents), 'lxml', parse_only = my_strainer, from_encoding=encoding)
         
         traverse(strained_soup.body, prune_dom, 0)
         STRAINED_SOUP_CACHE[file_path] = strained_soup
@@ -216,8 +215,9 @@ def extract_node(location_str, annotation_obj, book_info_obj, encoding='utf-8'):
     individual_xml_path = mark.split('#')[0].strip()
     epub_file_name      = book_info_obj.file_path
     out_stream          = StringIO.StringIO("")
-    epub_path           = os.path.join(r"J:/", epub_file_name)
+    epub_path           = os.path.join(r"L:/", epub_file_name)
     local_xhtml_path    = get_xhtml_path(epub_path, individual_xml_path)
+    siblings            = list()
 
     try:
         data_path           = extract_xhtml(epub_path, individual_xml_path)
@@ -228,7 +228,8 @@ def extract_node(location_str, annotation_obj, book_info_obj, encoding='utf-8'):
         py_error = traceback.format_exc()
         traceback_msg = '\n'.join(['   ' + a for a in py_error.split('\n')])
         out_stream.write(traceback_msg + '\n')
-        return out_stream, None
+        return out_stream, (None, [])
+
 
     with codecs.open(data_path, 'r', 'utf-8') as fp: 
         data = fp.read()
@@ -239,7 +240,7 @@ def extract_node(location_str, annotation_obj, book_info_obj, encoding='utf-8'):
 
     # dump the soup for later debugging:
     soup_dump = "%s.soup" % data_path
-    if (DEBUG_INFO):
+    if (DUMP_SOUP):
         with codecs.open(soup_dump, 'w', 'utf-8') as fp:
             traverse(strained_soup.body , print_dom , 0, out_stream=fp)
         
@@ -258,8 +259,11 @@ def extract_node(location_str, annotation_obj, book_info_obj, encoding='utf-8'):
 
     try:
         extracted_node = get_node_by_hier_path(node_hier, strained_soup.body)
-        out_stream.write('\n' + unicode(extracted_node))
-        return out_stream, extracted_node
+        print_debug("  * node (unicode)  : %s\n" %  unicode(extracted_node), out_stream)
+        print_debug("  * type(node)      : ``%s``\n" % _clean_tag_type(str(type(extracted_node))), out_stream)
+        for sibling_node in extracted_node.find_next_siblings():
+            siblings.append(sibling_node)
+        return out_stream, (extracted_node, siblings)
 
     except:
         out_stream.write("\nExtraction error:\n\n")
@@ -267,17 +271,21 @@ def extract_node(location_str, annotation_obj, book_info_obj, encoding='utf-8'):
         py_error = traceback.format_exc()
         traceback_msg = '\n'.join(['   ' + a for a in py_error.split('\n')])
         out_stream.write(traceback_msg + '\n')
-        return out_stream, None
+        return out_stream, (None, [])
+
+
+
 
 def print_debug(data, out_stream):
     if not DEBUG_INFO: return
     else: out_stream.write(data)
     
 
+
 def get_annotation_texts(out_stream=sys.stdout):
     """top-level entry point"""
-    base_dir        = r'J:/Sony_Reader/media/books/'
-    db_file_path    = r'J:/Sony_Reader/database/books.db'
+    base_dir        = r'L:/Sony_Reader/media/books/'
+    db_file_path    = r'L:/Sony_Reader/database/books.db'
     annotation_dict = get_all_annotations(db_file_path) 
     book_info_dict  = get_book_info(db_file_path)      
 
@@ -287,19 +295,26 @@ def get_annotation_texts(out_stream=sys.stdout):
 
     non_empty_book_ids = [an_id for an_id in book_info_dict.keys() if 
                           annotation_dict[an_id] != []]
-    # XXX: do the full monty or just the first couple of books?
+
+    # sort the list of book_ids (for the time being according to number of 
+    # annotations contained in the book
+    def book_compare(id1, id2): 
+        return cmp(len(annotation_dict[id2]), len(annotation_dict[id1]))
+        
+    non_empty_book_ids.sort(cmp=book_compare)
+    out_stream.write('\n' + underline('Annotations', underliner = '#') + '\n')
+
+    
     for a_book_id in non_empty_book_ids:
-        #if a_book_id not in [4294968997, 4294967700, 4294969467] : continue
         book_info_obj       = book_info_dict[a_book_id]
         annotations_in_book = annotation_dict[a_book_id]
 
         print '-I- Processing %s %s'  % (book_info_obj.title, a_book_id)
 
         out_stream.write('\n' + underline(book_info_obj.title, underliner = '*') + '\n')
-        out_stream.write('Book ID: (*%s*)\n\n' % a_book_id)
-
-
-        for index, annotation_obj in enumerate(annotations_in_book):
+        out_stream.write('*%s*  (%s)\n\n' % (book_info_obj.author, a_book_id))
+        
+        for annotation_index, annotation_obj in enumerate(annotations_in_book):
             print_debug(underline("\nAnchors"), out_stream)
             print_debug('    * %s\n    * %s\n\n' %(annotation_obj.mark, 
                                                    annotation_obj.mark_end),
@@ -307,22 +322,27 @@ def get_annotation_texts(out_stream=sys.stdout):
             # first the marked_text field from database
             print_debug(underline("Marked text"), out_stream)
             # final output (form database)
-            out_stream.write('* ' + annotation_obj.marked_text.strip() + '\n')
+            #out_stream.write('* ' + annotation_obj.marked_text.strip() + '\n')
+            out_string_from_db =  annotation_obj.marked_text
+
+
+            print_debug(underline("\nExtracted node %d" % annotation_index), out_stream)
 
             # Now the extacted stuff from the DOM (if not pdf)
             if  book_info_obj.file_path.endswith('pdf'): 
+                selection = out_string_from_db
+                out_stream.write('* %s\n' % (selection))
                 continue
-
-
             
-            print_debug(underline("Extracted node"), out_stream)
 
-            from_doc_n1 , start_node = extract_node('mark',
-                                                 annotation_obj,
-                                                 book_info_obj)
-            from_doc_n2 , end_node = extract_node('mark_end',
-                                                annotation_obj,
-                                                book_info_obj)
+            from_doc_n1 , (start_node, start_siblings) = extract_node('mark',
+                                                    annotation_obj,
+                                                    book_info_obj,
+                                                    'utf-8')
+            from_doc_n2 , (end_node, end_siblings) = extract_node('mark_end',
+                                                  annotation_obj,
+                                                  book_info_obj,
+                                                  'utf-8')
             # mark
             print_debug(underline("Mark:", underliner = '.'), out_stream)
             print_debug(from_doc_n1.getvalue() + '\n', out_stream)
@@ -334,72 +354,80 @@ def get_annotation_texts(out_stream=sys.stdout):
             if start_node is not None and end_node is not None:
                 _ , start_offset = get_point_info(annotation_obj.mark)
                 _ , end_offset   = get_point_info(annotation_obj.mark_end)
-                #out_stream.write(underline('Start, end'  , underliner='~'))
-                #out_stream.write('\n*  %d, %d \n' % (start_offset, end_offset))
-                #out_stream.write("*  Node types: ``%s``, ``%s``\n\n" % (str(type(start_node)), str(type(end_node)))  )
 
-                try:
-                    if start_node == end_node :
-                        if type(start_node) == bs4.element.NavigableString:
-                            _data     = bytes(unicode(start_node))
-                            byte_data = _data[start_offset:end_offset]
-                            _data     = unicode(start_node)
-                            data      = _data[start_offset:end_offset]
-                            
-                            if data != byte_data:
-                                # same node, data != byte_data
-                                msg = underline('SameNodes ``(%s)``: Using ``bytes()``, start,end locations for ``NavigableString``'  % \
-                                _clean_tag_type(str(type(start_node))),  underliner='~')
-                                print_debug(msg, out_stream)
-                                out_string = byte_data 
-                                out_stream.write('* %s\n' % out_string.replace('\n', ' ').strip())
+                if start_node == end_node :
+                    if type(start_node) == bs4.element.NavigableString:
+                        _data     = bytes(unicode(start_node))
+                        byte_data = unicode(_data[start_offset:end_offset], errors='ignore')
+                        _data     = unicode(start_node)
+                        data      = _data[start_offset:end_offset]
+                        
+                        if data != byte_data:
+                            # same node, data != byte_data
+                            msg = underline('SameNodes ``(%s)``: Using ``bytes()``, start,end locations for ``NavigableString``'  % \
+                            _clean_tag_type(str(type(start_node))),  underliner='~')
+                            print_debug(msg, out_stream)
+                            out_string = byte_data 
 
-                                #msg = underline('SameNodes ``(%s)``: Using start,end locations for ``NavigableString``'  %\
-                                #_clean_tag_type(str(type(start_node))),underliner='~')
-                                #out_stream.write(msg)
-                                #out_stream.write('\n' + data + '\n')
-                            else:
-                                # same node, data == byte_data
-                                print_debug(underline('SameNodes ``(%s)`` ``data == byte_data``' %\
-                                _clean_tag_type(str(type(start_node))),
-                                underliner='~'), out_stream)
-                                out_string = data
-                                out_stream.write('* %s\n' % out_string.replace('\n', ' ').strip())
-                                    
                         else:
-                            # same nodes, but not NavigableString
-                            msg = 'Same nodes but not NavigableString: %s, %s, via ``start_node.get_text()[start_offset, end_offset]``' %(str(type(start_node)), str(type(end_node)))
-                            print_debug(underline(msg, underliner='~'), out_stream)
-                            data = start_node.get_text()[start_offset, end_offset]
+                            # same node, data == byte_data
+                            print_debug(underline('SameNodes ``(%s)`` ``data == byte_data``' %\
+                            _clean_tag_type(str(type(start_node))),
+                            underliner='~'), out_stream)
                             out_string = data
-                            out_stream.write('* %s\n' % out_string.replace('\n', ' ').strip())
+                                
                     else:
-                        # Case when the marked text extends  over nodes
-                        _start_node_text = bytes(unicode(start_node))
-                        _end_node_text   = bytes(unicode(end_node))
-                        start_node_text  = _start_node_text[start_offset:]
-                        end_node_text    = _end_node_text  [:end_offset]
-                        out_string       = start_node_text + end_node_text
-                        msg              =  "Different nodes (combined)"
-                        print_debug(underline(msg , underliner='~'), out_stream)
-                        out_stream.write('* %s\n' % out_string.replace('\n', ' ').strip())
+                        # same nodes, but not NavigableString
+                        msg = 'Same nodes but not NavigableString: %s, %s, via ``start_node.get_text()[start_offset, end_offset]``' %(str(type(start_node)), str(type(end_node)))
+                        print_debug(underline(msg, underliner='~'), out_stream)
+                        data = start_node.get_text()[start_offset, end_offset]
+                        out_string = data
+                else:
 
-                except:
-                    # this is some wierd UnicodeDecodeError that I have 
-                    # not figured out yet
-                    print_debug(underline('Unicode error, fallback``(%s)`` ``data ? byte_data``' %\
-                    _clean_tag_type(str(type(start_node))), underliner='~'), out_stream)
-                    fallback = annotation_obj.marked_text.strip() 
-                    out_string = fallback
-                    out_stream.write('* %s\n' % out_string.replace('\n', ' ').strip())
+                    #if (annotation_index == 8 ): import pdb; pdb.set_trace()
+                    # Case when the marked text extends  over nodes/ subnodes
+                    # start, end nodes are of differnt types: 
 
-                #out_stream.write('* %s\n' % out_string.replace('\n', ' ').strip())
-
+                    # if they share the same paret and are NavigableString
+                    if start_node.parent == end_node.parent and \
+                        isinstance(start_node, bs4.element.NavigableString) and \
+                        isinstance(end_node  , bs4.element.NavigableString):
+                        out_string = unicode(start_node.parent.text)
+                        
+                        #_start_node_text = bytes(unicode(start_node.parent.text))
+                        #_end_node_text   = bytes(unicode(end_node))
+                        #end_offset = _start_node_text.find(_end_node_text)
+                        #out_string = _start_node_text[start_offset : end_offset ]
+                        #out_string += _end_node_text
+                        msg              =  "Different nodes, same parents"
+                    # they do not share the same parent: combine
+                    else:
+                        _start_node_text = bytes(unicode(start_node[start_offset:]))
+                        _end_node_text   = bytes(unicode(end_node[:end_offset]))
+                        #out_string = _start_node_text[start_offset : end_offset  ]
+                        out_string = _start_node_text + _end_node_text
+                        msg              =  "Different nodes, diff parents"
+                    print_debug(underline(msg , underliner='~'), out_stream)
+                    #import pdb; pdb.set_trace()
+                
+                # finally the selection: which to put ? 
+                from_epub     =  out_string.replace('\n', ' ').strip()
+                from_database =  out_string_from_db.strip()
+            # When either of the nodes are None
+            else:
+                from_epub = ''
+                from_database =  out_string_from_db.strip()
 
             
-            if (index != len(annotations_in_book)-1):
-                out_stream.write('\n------\n\n')
+            selection = from_database if (len(from_database) > len(from_epub)) else from_epub
+            choice = 'SQL' if (len(from_database) > len(from_epub)) else 'EPUB'
+            if selection.find('*') != -1 : selection= selection.replace('*', r'\*')
+            out_stream.write('* %s\n' % (selection))
 
+               
+        
+        #if a_book_id != non_empty_book_ids[-1]:
+        #    out_stream.write('\n------\n\n')
 
 
 
